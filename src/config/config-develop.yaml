@@ -1,0 +1,15 @@
+app:
+  port: 8000
+  name: belajar
+  environment: develop
+  key: randomkey
+  jwt_key: randomkey
+
+
+database:
+  belajar:
+    host: "localhost"
+    port: 5432
+    name: "belajar"
+    username: "postgres"
+    password: "password"
