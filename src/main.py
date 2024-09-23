@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from src.domains.auth.auth_http import router as auth_router
 from src.domains.book.book_http import router as book_router
+from src.domains.sharepoint.sharepoint_http import router as sharepoint_router
 
 app = FastAPI(title="OBP RBP Backend")
 
@@ -68,3 +69,4 @@ async def internal_exception_handler(request: Request, exc: Exception) -> JSONRe
 
 app.include_router(auth_router)
 app.include_router(book_router)
+app.include_router(sharepoint_router)

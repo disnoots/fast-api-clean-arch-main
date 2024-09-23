@@ -19,7 +19,7 @@ class BookUseCase(IBookUseCase):
 
     async def create_book(self, request: Request, create_book_request: CreateBookRequest) -> Books:
         valid = await self.book_repository.validate_ISBN(create_book_request.ISBN)
-        if valid is False:
+        if not valid:
             raise HTTPException(status_code=http.HTTPStatus.BAD_REQUEST, detail="ISBN is invalid")
 
         book = Books(
