@@ -1,14 +1,15 @@
+import shutil
 import openpyxl as openpyxl
 from fastapi import Depends
 from sqlalchemy.orm import Session
-from src.domains.sharepoint.sharepoint_interface import ISharepointRepository
-from src.dependencies.database_dependency import get_sample_db
 import environ
 from office365.sharepoint.client_context import ClientContext
 from office365.runtime.auth.client_credential import ClientCredential
 from pathlib import PurePath
 from openpyxl.utils import get_column_letter
 import os
+from src.dependencies.database_dependency import get_sample_db
+from src.domains.sharepoint.sharepoint_interface import ISharepointRepository
 
 class SharepointRepository(ISharepointRepository):
     def __init__(self, db: Session = Depends(get_sample_db)):
@@ -60,6 +61,8 @@ class SharepointRepository(ISharepointRepository):
     #endregion
 
     #region Excel
+
+    #region Upload
     def upload_excel(self, storage_dir, folder_name):
         env = environ.Env()
         environ.Env.read_env()
@@ -98,41 +101,48 @@ class SharepointRepository(ISharepointRepository):
             root_folder.upload_file(content=file_content, file_name=file[0]).execute_query()
         
         return (f"File {file[0]} has been uploaded")
+    #endregion
 
+    #region Delete Folder
+    def delete_folders(self, directories: list):
+        for folder_path in directories:
+            if os.path.exists(folder_path):
+                try:
+                    shutil.rmtree(folder_path)
+                    print(f"Successfully deleted: {folder_path}")
+                except Exception as e:
+                    print(f"Error deleting folder '{folder_path}': {e}")
+            else:
+                print(f"Folder '{folder_path}' does not exist.")
+    #endregion
+
+    #region Action 1
     def copy_forecast_from_folder(self, folder_path: str, link_2_folder: str):
         env = environ.Env()
         environ.Env.read_env()
 
         SHAREPOINT_TO_BE_MACROED = env('SHAREPOINT_TO_BE_MACROED')
 
-        print(f"Folder path: {folder_path}")
-
-        # Iterate through all Excel files in the folder for link_2
         for link_2_filename in os.listdir(link_2_folder):
             if link_2_filename.endswith(".xlsx"):
                 link_2_file = os.path.join(link_2_folder, link_2_filename)
                 wb_link_2 = openpyxl.load_workbook(link_2_file)
 
-                # Iterate through all Excel files in the folder (link_1)
                 for filename in os.listdir(folder_path):
                     if filename.endswith(".xlsx"):
                         link_1 = os.path.join(folder_path, filename)
 
-                        # Load the Excel file from the folder
                         wb_link_1 = openpyxl.load_workbook(link_1, data_only=True)
                         sheet_link_1 = wb_link_1.active
 
-                        # Get the dealer name (from row 4, column 2)
                         dealer_name = sheet_link_1.cell(row=4, column=2).value
 
                         if dealer_name not in wb_link_2.sheetnames:
                             print(f"Dealer sheet '{dealer_name}' not found in {link_2_file}")
-                            continue  # Skip to the next file if no matching dealer sheet exists
+                            raise ValueError(f"Dealer sheet '{dealer_name}' not found in {link_2_file}")
 
-                        # Get the dealer's sheet in the second Excel file
                         dealer_sheet_link_2 = wb_link_2[dealer_name]
 
-                        # Read the forecast columns in the current Excel file (link_1)
                         header_row = sheet_link_1[6]
                         forecast_columns = {}
 
@@ -143,10 +153,8 @@ class SharepointRepository(ISharepointRepository):
                         if not forecast_columns:
                             raise ValueError(f"No 'Forecast' columns found in {filename}.")
 
-                        # Prepare to store forecast data from link_1
                         forecast_data = {col_name: [] for col_name in forecast_columns}
 
-                        # Extract forecast data starting from row 7
                         for row in sheet_link_1.iter_rows(min_row=7):
                             first_cell_value = str(row[0].value)
 
@@ -157,29 +165,28 @@ class SharepointRepository(ISharepointRepository):
                                         value = None
                                     forecast_data[col_name].append(value)
 
-                        # Copy the forecast data to the corresponding dealer sheet in link_2
                         for col_name, data in forecast_data.items():
-                            # Find the column in dealer_sheet_link_2 that corresponds to the forecast column
                             col_index_link_2 = None
-                            for cell in dealer_sheet_link_2[6]:  # Assuming the header is in row 6
+                            for cell in dealer_sheet_link_2[6]:
                                 if cell.value == col_name:
                                     col_index_link_2 = cell.column
 
                             if col_index_link_2 is None:
                                 raise ValueError(f"Column '{col_name}' not found in sheet '{dealer_name}' of {link_2_file}.")
 
-                            # Copy the data into the respective column in link_2
-                            for row_idx, value in enumerate(data, start=7):  # Start from row 7 in dealer sheet
+                            for row_idx, value in enumerate(data, start=7):
                                 dealer_sheet_link_2.cell(row=row_idx, column=col_index_link_2, value=value)
 
                         print(f"Forecast data copied for dealer '{dealer_name}' from {filename} to {link_2_file}")
 
-                # Save changes to each processed Excel file in link_2 folder
                 wb_link_2.save(link_2_file)
 
         self.upload_excel(link_2_folder, SHAREPOINT_TO_BE_MACROED)
+        self.delete_folders([folder_path, link_2_folder])
         return (f"All forecast data copied and uploaded to SharePoint.")
+    #endregion
     
+    #region Action 2
     def copy_allocations_for_dealers(self, folder_path: str, link_2: str):
         env = environ.Env()
         environ.Env.read_env()
@@ -214,40 +221,52 @@ class SharepointRepository(ISharepointRepository):
                             print(f"Data copied for dealer '{dealer_name}' to {link_2_file}.")
                         else:
                             print(f"No matching file for dealer '{dealer_name}' in {link_2}.")
+                            raise ValueError(f"No matching file for dealer '{dealer_name}' in {link_2}.")
                     else:
                         print(f"Worksheet '{dealer_name}' does not exist in {filename}.")
         
         self.upload_excel(link_2, SHAREPOINT_DEALER_FINAL_ALLOCATION)
+        self.delete_folders([folder_path, link_2])
         return ("Processing completed and excel is uploaded to SharePoint")
 
     def read_allocation_columns(self, link: str, sheet_name: str):
         wb_obj = openpyxl.load_workbook(link, data_only=True)
         sheet_obj = wb_obj[sheet_name]
 
-        header_row = sheet_obj[6] 
+        header_row = sheet_obj[6]
         forecast_columns = {}
 
+        print("Header row:", [cell.value for cell in header_row])
+
         for cell in header_row:
-            if str(cell.value).startswith("Allocation"):
+            if cell.value and str(cell.value).startswith("Allocation"):
                 forecast_columns[cell.value] = cell.column
+
+        print("Identified Forecast Columns:", forecast_columns)
 
         if not forecast_columns:
             raise ValueError("No columns with headers starting with 'Allocation' found.")
 
         allocation_data = {col_name: [] for col_name in forecast_columns}
+        print("Initialized allocation_data:", allocation_data)
 
         for row in sheet_obj.iter_rows(min_row=7):
             first_cell_value = row[0].value
 
+            print("First cell value of the row:", first_cell_value)
+
             if first_cell_value and not str(first_cell_value).startswith("Total"):
                 for col_name, col_index in forecast_columns.items():
                     value = row[col_index - 1].value
-                    
+
+                    print(f"Value at row {row[0].row}, column {col_index}: {value}")
+
                     if value is None or isinstance(value, str) and value.strip().lower() in ["", "null"]:
                         value = 0
-                    
+
                     allocation_data[col_name].append(value)
 
+        print("Final allocation_data:", allocation_data)
         return allocation_data
 
     def copy_allocation(self, sheet_name: str, allocation_data: dict, link_2: str):
@@ -275,6 +294,8 @@ class SharepointRepository(ISharepointRepository):
         wb_obj_2.save(link_2)
         
         return f"Data copied successfully in {link_2}"
+    #endregion
+
     #endregion
 
     #region Excel Not Used
